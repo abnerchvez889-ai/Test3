@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import { File, Paths } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
 import { useEffect, useRef, useState } from "react";
@@ -10,8 +11,10 @@ import {
   Button,
   FlatList,
   Image,
+  Platform,
   Pressable,
   Text,
+  Vibration,
   View,
 } from "react-native";
 
@@ -22,36 +25,67 @@ export default function Index() {
   const [error, setError] = useState("");
   const [favoritos, setFavoritos] = useState<string[]>([]);
   const [movimiento, setMovimiento] = useState("quieto");
+  const [mostrarCamara, setMostrarCamara] = useState(false);
 
   const [permiso, pedirPermiso] = useCameraPermissions();
 
   const ultimoPedido = useRef(0);
   const ultimoId = useRef(0);
   const ultimoGolpe = useRef(0);
+  const camaraRef = useRef<CameraView>(null);
   const player = useAudioPlayer(null, { downloadFirst: true });
 
-  async function vibrarFuerte() {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
-      () => {}
-    );
-
-    for (let i = 0; i < 3; i++) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
-
-      await new Promise((listo) => setTimeout(listo, 150));
+  function vibrar(fuerte: boolean) {
+    try {
+      if (Platform.OS === "android") {
+        if (fuerte) {
+          Vibration.vibrate([0, 600, 200, 600, 200, 900], false);
+        } else {
+          Vibration.vibrate(300);
+        }
+      }
+    } catch (e) {
+      console.log("vibracion:", String(e));
     }
+
+    Haptics.impactAsync(
+      fuerte ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Light
+    ).catch(() => {});
   }
 
   function playAudio(Audio: string) {
+    vibrar(false);
+
     try {
       player.replace(Audio);
       player.play();
-
-      vibrarFuerte();
     } catch (e) {
       Alert.alert("Audio", "No se pudo reproducir el audio");
     }
   }
+
+  const tomarFoto = async () => {
+    if (camaraRef.current && permiso?.granted) {
+      vibrar(true);
+
+      const foto = await camaraRef.current.takePictureAsync();
+
+      if (foto) {
+        try {
+          const archivoOriginal = new File(foto.uri);
+          const archivoNuevo = new File(Paths.document, `pokemon_${Date.now()}.jpg`);
+
+          await archivoOriginal.copy(archivoNuevo);
+
+          Alert.alert("Camara", "Foto guardada en el dispositivo");
+        } catch (e) {
+          Alert.alert("Camara", "Error al guardar la foto");
+        }
+
+        setMostrarCamara(false);
+      }
+    }
+  };
 
   async function cargarLista() {
     setError("");
@@ -107,6 +141,10 @@ export default function Index() {
 
   useEffect(() => {
     setAudioModeAsync({ playsInSilentMode: true }).catch(() => {});
+
+    if (!permiso?.granted) {
+      pedirPermiso();
+    }
 
     cargarLista();
     cargarFavoritos();
@@ -180,21 +218,34 @@ export default function Index() {
     }
   }
 
+  if (mostrarCamara) {
+    if (!permiso?.granted) {
+      return (
+        <View style={camaraPantalla}>
+          <Text style={{ color: "#fff", marginBottom: 20 }}>
+            Necesitamos permiso para la camara
+          </Text>
+          <Button title="Dar permiso" onPress={pedirPermiso} />
+          <Button title="Volver" color="red" onPress={() => setMostrarCamara(false)} />
+        </View>
+      );
+    }
+
+    return (
+      <View style={{ flex: 1 }}>
+        <CameraView style={{ flex: 1 }} ref={camaraRef} />
+        <View style={{ position: "absolute", bottom: 40, width: "100%", padding: 20, gap: 10 }}>
+          <Button title="Tomar foto" onPress={tomarFoto} />
+          <Button title="Cancelar" color="red" onPress={() => setMostrarCamara(false)} />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={{ flex: 1, paddingTop: 50, backgroundColor: "#fff" }}>
-      {permiso?.granted && (
-        <View style={camaraCaja}>
-          <CameraView style={{ flex: 1 }} facing="back" />
-        </View>
-      )}
-
-      <View style={permisoFila}>
-        <Text style={{ fontSize: 13, color: "#333" }}>
-          Camara: {permiso?.granted ? "permiso concedido" : "sin permiso"}
-        </Text>
-        {!permiso?.granted && (
-          <Button title="Dar permiso de camara" onPress={pedirPermiso} />
-        )}
+      <View style={{ padding: 10 }}>
+        <Button title="Abrir camara" onPress={() => setMostrarCamara(true)} />
       </View>
 
       <View style={cajaChica}>
@@ -352,21 +403,11 @@ async function quitarFavorito(nombre: string) {
   }
 }
 
-const camaraCaja = {
-  height: 200,
-  marginHorizontal: 12,
-  marginBottom: 10,
-  borderRadius: 12,
-  overflow: "hidden" as const,
-  backgroundColor: "#000",
-};
-
-const permisoFila = {
-  flexDirection: "row" as const,
+const camaraPantalla = {
+  flex: 1,
   alignItems: "center" as const,
-  justifyContent: "space-between" as const,
-  paddingHorizontal: 12,
-  paddingBottom: 8,
+  justifyContent: "center" as const,
+  backgroundColor: "#000",
 };
 
 const cajaChica = {
